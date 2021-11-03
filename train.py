@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch import optim
 from model_zoo.unet2d import UNet
 from inferrence import *
-from model_zoo.dice_loss import DiceLoss
+from model_zoo.dice_loss import DiceLoss,BinaryDiceLoss
 from model_zoo.focal_loss import FocalLoss
 from model_zoo.WeightCE import WeightedCrossEntropy
 from utils.weight_init import weights_init
@@ -43,7 +43,7 @@ def main(res):
 
     # Setting the loss function
     loss_func_dict = {'BCE': nn.BCELoss().to(device)
-                     ,'dice':DiceLoss().to(device)
+                     ,'dice':BinaryDiceLoss().to(device)
                      ,'focal':FocalLoss().to(device)
                      ,'L2':nn.MSELoss().to(device)}
 
@@ -108,10 +108,10 @@ def main(res):
     Inference_Folder_images(model, model_ckpt, args.train_img_folder, os.path.join(args.output_dir, 'pred_train_mask/'))
     Inference_Folder_images(model, model_ckpt, args.test_img_folder , os.path.join(args.output_dir, 'pred_test_mask/'))
 
-    evl_test = SegEval(os.path.join(args.output_dir, 'pred_test_mask/pred')
-                      ,os.path.join(args.output_dir, 'pred_test_mask/mask'))
-    evl_test.evaluation_by_folder(["dice", "acc", "hausdorff", "volume similarity", "sensitivity", "precision"])
-    evl_test.export_eval_results(args.output_dir,'test_results.xlsx')
+    # evl_test = SegEval(os.path.join(args.output_dir, 'pred_test_mask/pred')
+    #                   ,os.path.join(args.output_dir, 'pred_test_mask/mask'))
+    # evl_test.evaluation_by_folder(["dice", "acc", "hausdorff", "volume similarity", "sensitivity", "precision"])
+    # evl_test.export_eval_results(args.output_dir,'test_results.xlsx')
 
     evl_train = SegEval(os.path.join(args.output_dir, 'pred_train_mask/pred')
                        ,os.path.join(args.output_dir, 'pred_train_mask/mask'))
