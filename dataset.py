@@ -44,13 +44,7 @@ class BasicDataset(Dataset):
 
     @classmethod
     def load(cls, filename):
-        ext = splitext(filename)[1]
-        if ext in ['.npz', '.npy']:
-            return Image.fromarray(np.load(filename))
-        elif ext in ['.pt', '.pth']:
-            return Image.fromarray(torch.load(filename).numpy())
-        else:
-            return Image.open(filename)
+        return Image.open(filename)
 
     def __getitem__(self, idx):
         name = self.ids[idx]

@@ -7,7 +7,9 @@ TSAN/__pycache__/
 TSAN/model/__pycache__/
 # C extensions
 *.so
-
+/images/
+/runs/
+/model_zoo/__pycache__/
 # Distribution / packaging
 .Python
 build/

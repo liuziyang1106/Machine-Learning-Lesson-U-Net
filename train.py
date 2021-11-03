@@ -1,3 +1,4 @@
+import json
 import tensorboardX
 import os,torch,datetime,sys,logging
 import numpy as np
@@ -6,9 +7,7 @@ from torch import optim
 from model_zoo.unet2d import UNet
 from inferrence import *
 from model_zoo.dice_loss import DiceLoss,BinaryDiceLoss
-from model_zoo.focal_loss import FocalLoss
 from model_zoo.dice_score import dice_coeff
-from model_zoo.WeightCE import WeightedCrossEntropy
 from utils.weight_init import weights_init
 from dataset import BasicDataset
 from torch.utils.data import DataLoader, random_split
@@ -49,13 +48,12 @@ def main(res):
                              ,num_workers=args.num_workers, pin_memory=True)
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-8)
-    scheduler = optim.lr_scheduler.StepLR(optimizer,step_size=20, gamma=0.5,verbose=1)
+    scheduler = optim.lr_scheduler.StepLR(optimizer,step_size=20, gamma=0.8,verbose=1)
 
     # Setting the loss function
-    loss_func_dict = {'BCE': nn.BCELoss().to(device)
+    loss_func_dict = {'bce': nn.BCELoss().to(device)
                      ,'dice':BinaryDiceLoss().to(device)
-                     ,'focal':FocalLoss().to(device)
-                     ,'L2':nn.MSELoss().to(device)}
+                     ,'l2':nn.MSELoss().to(device)}
 
     criterion = loss_func_dict[args.loss]
     aux_criterion = loss_func_dict[args.aux_loss]
@@ -105,13 +103,9 @@ def main(res):
             print("======= Early stopping =======")
             break
 
-    # =========== write traning and validation log =========== #
-    os.system('echo " ================================== "')
-    os.system('echo " ==== TRAIN MAE mtc:{:.5f}" >> {}'.format(train_loss, res))
-    
     print('Epo - Mtc')
     mtc_epo = dict(zip(saved_metrics, saved_epos))
-    rank_mtc = sorted(mtc_epo.keys(), reverse=False)
+    rank_mtc = sorted(mtc_epo.keys(), reverse=True)
     try:
         for i in range(5):
             print('{:03} {:.3f}'.format(mtc_epo[rank_mtc[i]]
