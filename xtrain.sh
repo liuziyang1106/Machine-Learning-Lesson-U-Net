@@ -1,22 +1,20 @@
 #!/bin/bash
-csize=96,128,96
-tipath=./data/data_2.1/T2/
-tmpath=./data/data_2.1/Seg/
-ifpath=./data/data_2.1/Test/
+tipath=./images/train/images
+tmpath=./images/train/label
+ifpath=./images/test
 
-lbd=2
-save_path=./runs/3DUnet_base_FeTA2.1_focal_${lbd}_dice_loss_${csize}/
+lbd=0
+save_path=./runs/2DUnet_baseline_${lbd}_dice_loss_${csize}/
 
 CUDA_VISIBLE_DEVICES=0     python train.py     \
 --output_dir          ${save_path}             \
 --batch_size          4                        \
 --epochs              200                      \
 --lr                  1e-3                     \
---crop_size           ${csize}                 \
---print_freq          10                       \
+--print_freq          2                       \
 --train_img_folder    ${tipath}                \
 --train_mask_folder   ${tmpath}                \
 --test_img_folder     ${ifpath}                \
---loss                focal                    \
---aux_loss            dice                     \
+--loss                BCE                       \
+--aux_loss            BCE                     \
 --lbd                 ${lbd}                   \

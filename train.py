@@ -3,7 +3,7 @@ import os,torch,datetime,sys,logging
 import numpy as np
 import torch.nn as nn
 from torch import optim
-from model_zoo.unet3d import UNet
+from model_zoo.unet2d import UNet
 from inferrence import *
 from model_zoo.dice_loss import DiceLoss
 from model_zoo.focal_loss import FocalLoss
@@ -22,13 +22,13 @@ img_size = [int(d) for d in args.crop_size.split(',')]
 def main(res):
     best_metric = 100
 
-    model = UNet(n_channels=1, n_classes=8, trilinear=True).to(device)
+    model = UNet(n_channels=1, n_classes=1, trilinear=True).to(device)
     model.apply(weights_init)
     if args.load:
         model.load_state_dict(torch.load(args.load, map_location=device))
         logging.info(f'Model loaded from {args.load}')
 
-    dataset = BasicDataset(args.train_img_folder, args.train_mask_folder, crop_size=img_size)
+    dataset = BasicDataset(args.train_img_folder, args.train_mask_folder)
     n_val = int(len(dataset) * args.val / 100)
     n_train = len(dataset) - n_val
     train_set, val_set = random_split(dataset, [n_train, n_val])
@@ -42,12 +42,9 @@ def main(res):
     scheduler = optim.lr_scheduler.StepLR(optimizer,step_size=10, gamma=0.5,verbose=1)
 
     # Setting the loss function
-    loss_func_dict = {'CE': nn.CrossEntropyLoss().to(device)
+    loss_func_dict = {'BCE': nn.BCELoss().to(device)
                      ,'dice':DiceLoss().to(device)
                      ,'focal':FocalLoss().to(device)
-                     ,'WCE':WeightedCrossEntropy(torch.cuda.FloatTensor([1.18, 5.28, 5.49, 3.62,
-                                                                         9.32, 14.92, 10.48, 17.65])).to(device)
-                     ,'L1':nn.L1Loss().to(device)
                      ,'L2':nn.MSELoss().to(device)}
 
     criterion = loss_func_dict[args.loss]
@@ -138,12 +135,11 @@ def train(train_loader, model, criterion, aux_criterion, optimizer, epoch, devic
         optimizer.zero_grad()
 
         imgs = imgs.to(device=device, dtype=torch.float32)
-        mask_type = torch.float32 if model.n_classes == 1 else torch.long
-        true_masks = true_masks.to(device=device, dtype=mask_type)
+        true_masks = true_masks.to(device=device, dtype=torch.float32)
         masks_pred = model(imgs)
 
         # # Remove the axis
-        true_masks = torch.squeeze(true_masks, dim=1)
+        masks_pred = torch.squeeze(masks_pred, dim=1)
         loss1 = criterion(masks_pred, true_masks)
         aux_loss = aux_criterion(masks_pred, true_masks)
         loss = loss1 + args.lbd * aux_loss
@@ -153,10 +149,10 @@ def train(train_loader, model, criterion, aux_criterion, optimizer, epoch, devic
         Total_loss.update(loss, imgs.size(0))
         if i % args.print_freq == 0:
             print('Epoch: [{0} / {1}]   [step {2}/{3}] \t'
-                'Tot_Loss {tot_loss.val:.4f} ({tot_loss.avg:.4f})  \t'
-                'Main_Loss {loss.val:.4f} ({loss.avg:.4f})  \t'
-                'Aux_Loss {aux_loss.val:.4f} ({aux_loss.avg:.4f})  \t'.format
-                (epoch, args.epochs, i, len(train_loader), tot_loss=Total_loss,loss=Epoch_loss1, aux_loss=AUX_loss))
+                 'Tot_Loss {tot_loss.val:.4f} ({tot_loss.avg:.4f})  \t'
+                 'Main_Loss {loss.val:.4f} ({loss.avg:.4f})  \t'
+                 'Aux_Loss {aux_loss.val:.4f} ({aux_loss.avg:.4f})  \t'.format
+                 (epoch, args.epochs, i, len(train_loader), tot_loss=Total_loss,loss=Epoch_loss1, aux_loss=AUX_loss))
     
         loss.backward()
         optimizer.step()
@@ -176,12 +172,11 @@ def valiation(val_loader, model, criterion, aux_criterion, device):
                 f'but loaded images have {imgs.shape[1]} channels. Please check that ' \
                 'the images are loaded correctly.'
             imgs = imgs.to(device=device, dtype=torch.float32)
-            mask_type = torch.float32 if model.n_classes == 1 else torch.long
-            true_masks = true_masks.to(device=device, dtype=mask_type)
+            true_masks = true_masks.to(device=device, dtype=torch.float32)
             masks_pred = model(imgs)
 
             # Remove the axis
-            true_masks = torch.squeeze(true_masks, dim=1)
+            masks_pred = torch.squeeze(masks_pred, dim=1)
             loss = criterion(masks_pred, true_masks)
             aux_loss = aux_criterion(masks_pred, true_masks)
 
