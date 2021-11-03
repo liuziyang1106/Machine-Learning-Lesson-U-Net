@@ -2,8 +2,8 @@
 import numpy as np
 import torch,os,shutil
 import torch.nn.functional as F
-from model_zoo.unet3d import UNet
-import nibabel as nib
+from model_zoo.unet2d import UNet
+from PIL import Image
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
@@ -16,10 +16,10 @@ def predict_mask(net, full_img, device, out_threshold=0.5):
 
     with torch.no_grad():
         output = net(img)
-        probs = torch.softmax(output, dim=1)
-        probs = probs.squeeze(0)
-        full_mask = probs.squeeze().cpu().numpy()
-    mask = np.argmax(full_mask > out_threshold, axis=0).astype(np.int16)
+        full_mask = output.squeeze().cpu().numpy()
+        print(full_mask)
+    # mask = np.argmax(full_mask > out_threshold, axis=0).astype(np.int16)
+    mask = (full_mask > out_threshold).astype(np.int16)
     return mask
 
 def Inference_single_image(net, model_ckpt, img_path, output_path='./'):   
@@ -42,35 +42,28 @@ def Inference_Folder_images(net, model_ckpt, folder_path, output_path='./'):
     net.load_state_dict(torch.load(model_ckpt, map_location=device)['state_dict'])
     
     if not os.path.exists(output_path):
-        os.makedirs(output_path)
         os.makedirs(output_path + 'pred')
-        os.makedirs(output_path + 'mask/')
-        os.makedirs(output_path + 'imgs/')
 
 
     for img_path in os.listdir(folder_path):
-        if 'T2w' in img_path:
-            img = nib.load(os.path.join(folder_path,img_path))
-            img_data = img.get_fdata()
-            img_affine = img.affine
-            img_data = img_data[np.newaxis, :]
-            sub_id = (img_path.split('/')[-1]).replace('T2w', 'pred')
-            print(sub_id)
-            mask = predict_mask(net=net,full_img=img_data,out_threshold=0.5,device=device)
-            inference_path = os.path.join(output_path+ 'pred', sub_id)
-            predict_img = nib.Nifti1Image(mask, img_affine).to_filename(inference_path)
-            shutil.copyfile(os.path.join(folder_path,img_path),os.path.join(output_path+ 'imgs/', img_path))
-        if 'dseg' in img_path:
-            shutil.copyfile(os.path.join(folder_path,img_path),os.path.join(output_path+ 'mask/', img_path))
+        img = Image.open((os.path.join(folder_path,img_path)))
+        img = np.asarray(img)
+        img = img[np.newaxis, ...]
+        img = img / 255
 
-            
+        sub_id = str(img_path.split('.')[0])
+        mask = predict_mask(net=net, full_img=img, out_threshold=0.5, device=device)
+        inference_path = os.path.join(output_path+ 'pred', sub_id)
+        img = Image.fromarray((mask * 255).astype(np.uint8))
+        out_filename = os.path.join(output_path,  'pred/' + sub_id + '.tif')
+        img.save(out_filename)
+
+           
 if __name__ == "__main__":
-    model = "./runs/3DUnet_base_resample_40_dice_loss_64*128*128/unet_best_model.pth.tar"
-    img_path = "data/data_2.1/imgs_crop/sub-015_T2w.nii.gz"
-    folder = "data/data_2.1/Test/"
-    net = UNet(n_channels=1, n_classes=8)
-    # Inference_single_image(net, model, img_path)
-    Inference_Folder_images(net, model, folder,'./runs/3DUnet_base_resample_40_dice_loss_64*128*128/pred_test/')
+    model = "/data/ziyang/workspace/Machine-Learning-U-Net/runs/2DUnet_baseline_0_dice_loss_/unet_best_model.pth.tar"
+    folder = "/data/ziyang/workspace/Machine-Learning-U-Net/images/train/images"
+    net = UNet(n_channels=1, n_classes=1)
+    Inference_Folder_images(net, model, folder,'/data/ziyang/workspace/Machine-Learning-U-Net/runs/2DUnet_baseline_0_dice_loss_/train/')
 
     
 
