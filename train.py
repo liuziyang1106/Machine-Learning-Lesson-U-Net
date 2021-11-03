@@ -7,6 +7,7 @@ from model_zoo.unet2d import UNet
 from inferrence import *
 from model_zoo.dice_loss import DiceLoss,BinaryDiceLoss
 from model_zoo.focal_loss import FocalLoss
+from model_zoo.dice_score import dice_coeff
 from model_zoo.WeightCE import WeightedCrossEntropy
 from utils.weight_init import weights_init
 from dataset import BasicDataset
@@ -14,13 +15,13 @@ from torch.utils.data import DataLoader, random_split
 from torchvision import transforms
 from config import args
 from evaluation import *
+
 torch.backends.cudnn.enabled = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-img_size = [int(d) for d in args.crop_size.split(',')]
 
 
 def main(res):
-    best_metric = 100
+    best_metric = 0.0
 
     model = UNet(n_channels=1, n_classes=1, trilinear=True).to(device)
     model.apply(weights_init)
@@ -31,14 +32,16 @@ def main(res):
     dataset = BasicDataset(args.train_img_folder, args.train_mask_folder)
     n_val = int(len(dataset) * args.val / 100)
     n_train = len(dataset) - n_val
+
     train_set, val_set = random_split(dataset, [n_train, n_val])
+
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True
                              ,num_workers=args.num_workers, pin_memory=True)
+
     valid_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False
                              ,num_workers=args.num_workers, pin_memory=True)
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-8)
-    # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min' if model.n_classes > 1 else 'max', patience=2)
     scheduler = optim.lr_scheduler.StepLR(optimizer,step_size=10, gamma=0.5,verbose=1)
 
     # Setting the loss function
@@ -54,9 +57,9 @@ def main(res):
     writer = tensorboardX.SummaryWriter(args.output_dir)
 
     for epoch in range(args.epochs):
-        train_loss, train_aux_loss = train(train_loader, model=model, criterion=criterion, aux_criterion = aux_criterion
+        train_loss, train_aux_loss = train(train_loader, model=model, criterion=criterion, aux_criterion=aux_criterion
                                           ,optimizer = optimizer, epoch = epoch, device = device)
-        val_loss, val_aux_loss = valiation(val_loader=valid_loader, model=model, criterion=criterion, aux_criterion=aux_criterion
+        val_loss, val_aux_loss, val_Dice = valiation(val_loader=valid_loader, model=model, criterion=criterion, aux_criterion=aux_criterion
                                           ,device=device)
         scheduler.step()
 
@@ -71,21 +74,23 @@ def main(res):
         writer.add_scalar('Train/aux_loss', train_aux_loss, epoch)
         writer.add_scalar('Val/loss', val_loss, epoch)
         writer.add_scalar('Val/aux_loss', val_aux_loss, epoch)
+        writer.add_scalar('Val/Dice_value', val_Dice, epoch)
 
 
-        valid_metric = val_aux_loss
+        valid_metric = val_Dice
         is_best = False
-        if valid_metric < best_metric:
+        if valid_metric > best_metric:
             is_best = True
-            best_metric = min(valid_metric, best_metric)
+            best_metric = max(valid_metric, best_metric)
                 
             saved_metrics.append(valid_metric)
             saved_epos.append(epoch)
-            print('=======>   Best at epoch %d, valid Dice Loss %f\n' % (epoch, best_metric))
+            print('=======>   Best at epoch %d, valid Dice Value %f\n' % (epoch, best_metric))
 
         save_checkpoint({'epoch': epoch
                         ,'state_dict': model.state_dict()}
                         , is_best, args.output_dir, model_name=args.model)
+
     # =========== write traning and validation log =========== #
     os.system('echo " ================================== "')
     os.system('echo " ==== TRAIN MAE mtc:{:.5f}" >> {}'.format(train_loss, res))
@@ -108,13 +113,8 @@ def main(res):
     Inference_Folder_images(model, model_ckpt, args.train_img_folder, os.path.join(args.output_dir, 'pred_train_mask/'))
     Inference_Folder_images(model, model_ckpt, args.test_img_folder , os.path.join(args.output_dir, 'pred_test_mask/'))
 
-    # evl_test = SegEval(os.path.join(args.output_dir, 'pred_test_mask/pred')
-    #                   ,os.path.join(args.output_dir, 'pred_test_mask/mask'))
-    # evl_test.evaluation_by_folder(["dice", "acc", "hausdorff", "volume similarity", "sensitivity", "precision"])
-    # evl_test.export_eval_results(args.output_dir,'test_results.xlsx')
-
     evl_train = SegEval(os.path.join(args.output_dir, 'pred_train_mask/pred')
-                       ,os.path.join(args.output_dir, 'pred_train_mask/mask'))
+                       ,os.path.join(args.train_mask_folder))
     evl_train.evaluation_by_folder(["dice", "acc", "hausdorff", "volume similarity", "sensitivity", "precision"])
     evl_train.export_eval_results(args.output_dir, 'train_results.xlsx')
     return 0
@@ -162,15 +162,18 @@ def train(train_loader, model, criterion, aux_criterion, optimizer, epoch, devic
 def valiation(val_loader, model, criterion, aux_criterion, device):
     Epoch_loss = AverageMeter()
     AUX_loss = AverageMeter()
+    Dice = AverageMeter()
     model.eval()
     with torch.no_grad():
         for i, batch in enumerate(val_loader):
             imgs = batch['image']
             true_masks = batch['mask']
+
             assert imgs.shape[1] == model.n_channels, \
                 f'Network has been defined with {model.n_channels} input channels, ' \
                 f'but loaded images have {imgs.shape[1]} channels. Please check that ' \
                 'the images are loaded correctly.'
+
             imgs = imgs.to(device=device, dtype=torch.float32)
             true_masks = true_masks.to(device=device, dtype=torch.float32)
             masks_pred = model(imgs)
@@ -180,12 +183,15 @@ def valiation(val_loader, model, criterion, aux_criterion, device):
             loss = criterion(masks_pred, true_masks)
             aux_loss = aux_criterion(masks_pred, true_masks)
 
+            dice_value = dice_coeff(masks_pred, true_masks)
+            
             Epoch_loss.update(loss, imgs.size(0))
             AUX_loss.update(aux_loss, imgs.size(0))
+            Dice.update(dice_value, imgs.size(0))
 
-        print('Valid: [steps {0}], Main_Loss {loss.avg:.4f} Aux_Loss {Aux_loss.avg:.4f}'.format(
-               len(val_loader), loss=Epoch_loss, Aux_loss=AUX_loss))
-    return Epoch_loss.avg, AUX_loss.avg
+        print('Valid: [steps {0}], Main_Loss {loss.avg:.4f}    Aux_Loss {Aux_loss.avg:.4f}    Dice Value {Dice.avg:.4f}'.format(
+               len(val_loader), loss=Epoch_loss, Aux_loss=AUX_loss, Dice=Dice))
+    return Epoch_loss.avg, AUX_loss.avg, Dice.avg
 
 def save_checkpoint(state, is_best, out_dir, model_name):
     checkpoint_path = out_dir+model_name+'_checkpoint.pth.tar'
