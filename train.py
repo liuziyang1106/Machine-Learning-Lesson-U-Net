@@ -21,6 +21,13 @@ device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 
 def main(res):
+    json_path = os.path.join(args.output_dir,'hyperparameter.json')
+    with open(json_path,'w') as f:
+        f.write(json.dumps(vars(args)
+                            ,ensure_ascii=False
+                            ,indent=4
+                            ,separators=(',', ':')))
+
     best_metric = 0.0
 
     model = UNet(n_channels=1, n_classes=1, trilinear=True).to(device)
@@ -42,7 +49,7 @@ def main(res):
                              ,num_workers=args.num_workers, pin_memory=True)
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-8)
-    scheduler = optim.lr_scheduler.StepLR(optimizer,step_size=10, gamma=0.5,verbose=1)
+    scheduler = optim.lr_scheduler.StepLR(optimizer,step_size=20, gamma=0.5,verbose=1)
 
     # Setting the loss function
     loss_func_dict = {'BCE': nn.BCELoss().to(device)
@@ -55,6 +62,8 @@ def main(res):
 
     saved_metrics, saved_epos = [], []
     writer = tensorboardX.SummaryWriter(args.output_dir)
+
+    early_stopping = EarlyStopping(patience=50, verbose=True)
 
     for epoch in range(args.epochs):
         train_loss, train_aux_loss = train(train_loader, model=model, criterion=criterion, aux_criterion=aux_criterion
@@ -90,6 +99,11 @@ def main(res):
         save_checkpoint({'epoch': epoch
                         ,'state_dict': model.state_dict()}
                         , is_best, args.output_dir, model_name=args.model)
+
+        early_stopping(val_Dice)        
+        if early_stopping.early_stop:
+            print("======= Early stopping =======")
+            break
 
     # =========== write traning and validation log =========== #
     os.system('echo " ================================== "')
@@ -217,6 +231,40 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+
+class EarlyStopping:
+
+    """Early stops the training if validation loss doesn't improve after a given patience."""
+    def __init__(self, patience=15, verbose=False):
+        """
+        Args:
+            patience (int): How long to wait after last time validation loss improved.
+                            Default: 15
+            verbose (bool): If True, prints a message for each validation loss improvement. 
+                            Default: False
+        """
+        self.patience = patience
+        self.verbose = verbose
+        self.counter = 0
+        self.best_score = None
+        self.early_stop = False
+        self.val_loss_min = np.Inf
+
+    def __call__(self, val_metric):
+
+        score = val_metric
+
+        if self.best_score is None:
+            self.best_score = score
+
+        elif score < self.best_score:
+            self.counter += 1
+            print(f'EarlyStopping counter: {self.counter} out of {self.patience}\n\n')
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_score = score
+            self.counter = 0
 
 if __name__ == '__main__':
     print(args)
