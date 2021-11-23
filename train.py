@@ -5,6 +5,7 @@ import numpy as np
 import torch.nn as nn
 from torch import optim
 from model_zoo.unet2d import UNet
+from model_zoo.unet2d_se import UNet_SE
 from inferrence import *
 from model_zoo.dice_loss import DiceLoss,BinaryDiceLoss
 from model_zoo.dice_score import dice_coeff
@@ -29,7 +30,12 @@ def main(res):
 
     best_metric = 0.0
 
-    model = UNet(n_channels=1, n_classes=1, trilinear=True).to(device)
+    model_dict =  {'unet': UNet(n_channels=1, n_classes=1, trilinear=True).to(device)
+                   ,'seunet': UNet_SE(n_channels=1, n_classes=1, trilinear=True).to(device)}
+
+    model = model_dict[args.model]
+    
+    # model = 
     model.apply(weights_init)
     if args.load:
         model.load_state_dict(torch.load(args.load, map_location=device))
@@ -61,7 +67,7 @@ def main(res):
     saved_metrics, saved_epos = [], []
     writer = tensorboardX.SummaryWriter(args.output_dir)
 
-    early_stopping = EarlyStopping(patience=50, verbose=True)
+    # early_stopping = EarlyStopping(patience=50, verbose=True)
 
     for epoch in range(args.epochs):
         train_loss, train_aux_loss = train(train_loader, model=model, criterion=criterion, aux_criterion=aux_criterion
@@ -98,10 +104,10 @@ def main(res):
                         ,'state_dict': model.state_dict()}
                         , is_best, args.output_dir, model_name=args.model)
 
-        early_stopping(val_Dice)        
-        if early_stopping.early_stop:
-            print("======= Early stopping =======")
-            break
+        # early_stopping(val_Dice)        
+        # if early_stopping.early_stop:
+        #     print("======= Early stopping =======")
+        #     break
 
     print('Epo - Mtc')
     mtc_epo = dict(zip(saved_metrics, saved_epos))
